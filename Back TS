@@ -1,0 +1,167 @@
+import time
+import random
+
+DUR_G = 7
+DUR_Y = 2
+VEL_INICIAL_RANGE = (1, 4)
+
+class LightCtrl:
+    def __init__(self, light):
+        self.light = light
+
+    def ctrl_trans(self):
+        self.light.curr_state.transition_logic()
+        
+class ColisaoHdl:
+    def __init__(self, car):
+        self.car = car
+
+    def chk_reagir(self, all_cars):
+        car_frente = self.get_car_frente(all_cars)
+
+        if car_frente:
+            dist = car_frente.pos - self.car.pos
+            
+            if 0 < dist < 10 and car_frente.vel <= self.car.vel:
+                StopStrategy(self.car).move()
+                return True
+        return False
+
+    def get_car_frente(self, all_cars):
+        closest = None
+        min_dist = float('inf')
+        
+        for other in all_cars:
+            if other != self.car and other.pos > self.car.pos:
+                dist = other.pos - self.car.pos
+                if dist < min_dist:
+                    min_dist = dist
+                    closest = other
+        return closest
+    
+
+class LightState:
+    def __init__(self, light):
+        self.light = light
+        self.start_t = time.time()
+        self.name = "BASE"
+
+    def transition_logic(self):
+        raise NotImplementedError
+
+    def apply_strat(self, cars_in_lane):
+        raise NotImplementedError
+
+class StateR(LightState):
+    def __init__(self, light):
+        super().__init__(light)
+        self.name = "R"
+
+    def transition_logic(self):
+        if time.time() - self.start_t >= DUR_G:
+            self.light.curr_state = StateG(self.light)
+
+    def apply_strat(self, cars_in_lane):
+        for car in cars_in_lane:
+            if car.pos < 50: 
+                 car.mov_strat = StopStrategy(car)
+            else:
+                 car.mov_strat = FollowStrategy(car)
+
+class StateY(LightState):
+    def __init__(self, light):
+        super().__init__(light)
+        self.name = "Y"
+
+    def transition_logic(self):
+        if time.time() - self.start_t >= DUR_Y:
+            self.light.curr_state = StateR(self.light)
+
+    def apply_strat(self, cars_in_lane):
+        for car in cars_in_lane:
+            if car.pos < 50:
+                 car.mov_strat = StopStrategy(car)
+            else:
+                 car.mov_strat = FollowStrategy(car)
+
+class StateG(LightState):
+    def __init__(self, light):
+        super().__init__(light)
+        self.name = "G"
+
+    def transition_logic(self):
+        if time.time() - self.start_t >= DUR_G:
+            self.light.curr_state = StateY(self.light)
+
+    def apply_strat(self, cars_in_lane):
+        for car in cars_in_lane:
+            car.mov_strat = FollowStrategy(car)
+
+
+class MovStrat:
+    def __init__(self, car):
+        self.car = car
+    
+    def move(self):
+        raise NotImplementedError
+
+class FollowStrategy(MovStrat):
+    def move(self):
+        self.car.pos += self.car.vel
+
+class StopStrategy(MovStrat):
+    def move(self):
+        pass
+    
+
+class SimObj:
+    def __init__(self, id):
+        self.id = id
+
+    def update(self, env_data):
+        raise NotImplementedError
+
+class Light(SimObj):
+    def __init__(self, id, ctrl_cars):
+        super().__init__(id)
+        self.ctrl_cars = ctrl_cars
+        self.curr_state = StateR(self)
+        self.state_ctrl = LightCtrl(self)
+
+    def update(self, env_data):
+        self.state_ctrl.ctrl_trans()
+        self.curr_state.apply_strat(self.ctrl_cars)
+
+    def __str__(self):
+        return f"Luz {self.id}: Estado={self.curr_state.name}"
+
+class Car(SimObj):
+    def __init__(self, id, pos_i, vel):
+        super().__init__(id)
+        self.pos = pos_i
+        self.vel = vel
+        self.mov_strat = FollowStrategy(self)
+        self.colisao_hdl = ColisaoHdl(self)
+
+    def update(self, all_cars):
+        colisao_iminente = self.colisao_hdl.chk_reagir(all_cars)
+
+        if not colisao_iminente:
+            self.mov_strat.move()
+
+        if self.pos > 100:
+            self.pos = 0
+
+    def __str__(self):
+        return f"Carro {self.id}: Pos={self.pos:0.2f}, Vel={self.vel}, Estratégia={type(self.mov_strat).__name__}"
+
+def init_sim():
+    cars = []
+    for i in range(5):
+        vel = random.uniform(*VEL_INICIAL_RANGE)
+        pos = 10 + i * 20
+        car = Car(f"C{i+1}", pos, vel)
+        cars.append(car)
+
+    light = Light("L1", cars)
+    return cars, light
