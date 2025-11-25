@@ -1,0 +1,238 @@
+import pygame
+import time
+import random
+from sim_core import init_sim, StateG, StateY, StateR
+
+
+SCREEN_W, SCREEN_H = 800, 800
+ROAD_W = 120
+CAR_SIZE = (40, 20)
+FPS = 30
+
+ROAD_COLOR = (50, 50, 50)
+BG_COLOR = (90, 90, 90)
+RED = (255, 0, 0)
+YELLOW = (255, 255, 0)
+GREEN = (0, 255, 0)
+CAR_COLORS = [(0, 150, 255), (255, 200, 0), (0, 255, 120), (255, 100, 100)]
+
+
+class TrafficController:
+    def __init__(self):
+        self.lights = []
+        self.cars = []
+
+        for i in range(4):
+            cars, light = init_sim()
+            light.id = f"L{i+1}"
+            self.lights.append(light)
+            for c in cars:
+                c.id = f"{light.id}_{c.id}"
+            self.cars.extend(cars)
+
+        self.current_idx = 0
+        self.last_switch = time.time()
+        self.set_active_light(0)
+
+        self.directions = ["N", "S", "E", "W"]
+        self.reset_car_positions()
+
+    def reset_car_positions(self):
+        for i, car in enumerate(self.cars):
+            dir_idx = i // 5
+            direction = self.directions[dir_idx]
+            car.direction = direction
+            car.vel = random.uniform(2, 4)
+            car.passed_line = False
+
+            if direction == "N":
+                car.x, car.y = SCREEN_W // 2 - ROAD_W // 4, SCREEN_H - i * 60
+                car.angle = 90
+            elif direction == "S":
+                car.x, car.y = SCREEN_W // 2 + ROAD_W // 4, i * 60
+                car.angle = 270
+            elif direction == "E":
+                car.x, car.y = i * 60, SCREEN_H // 2 - ROAD_W // 4
+                car.angle = 180
+            elif direction == "W":
+                car.x, car.y = SCREEN_W - i * 60, SCREEN_H // 2 + ROAD_W // 4
+                car.angle = 0
+
+    def set_active_light(self, idx):
+        for i, light in enumerate(self.lights):
+            if i == idx:
+                light.curr_state = StateG(light)
+            else:
+                light.curr_state = StateR(light)
+
+    def update(self):
+        now = time.time()
+        elapsed = now - self.last_switch
+        active_light = self.lights[self.current_idx]
+
+        if isinstance(active_light.curr_state, StateG) and elapsed >= 7:
+            active_light.curr_state = StateY(active_light)
+            self.last_switch = now
+        elif isinstance(active_light.curr_state, StateY) and elapsed >= 2:
+            active_light.curr_state = StateR(active_light)
+            self.current_idx = (self.current_idx + 1) % len(self.lights)
+            self.set_active_light(self.current_idx)
+            self.last_switch = now
+
+        for direction in self.directions:
+            cars_in_dir = [c for c in self.cars if c.direction == direction]
+            self.update_direction(cars_in_dir, direction)
+
+    def update_direction(self, cars, direction):
+        light_state = self.lights[self.directions.index(direction)].curr_state.name
+        cx, cy = SCREEN_W // 2, SCREEN_H // 2
+        stop_dist = 160
+        min_gap = 45 
+  
+        if direction == "N":
+            cars.sort(key=lambda c: c.y) 
+        elif direction == "S":
+            cars.sort(key=lambda c: -c.y) 
+        elif direction == "E":
+            cars.sort(key=lambda c: -c.x)
+        elif direction == "W":
+            cars.sort(key=lambda c: c.x) 
+
+        for i, car in enumerate(cars):
+            front_car = cars[i-1] if i > 0 else None
+            blocked = False
+
+            if direction == "N":
+                stop_line = cy + stop_dist
+                if car.y <= stop_line:
+                    car.passed_line = True
+ 
+                if not car.passed_line and light_state == "R" and car.y - car.vel <= stop_line:
+                    blocked = True
+                if front_car and (car.y - front_car.y) < min_gap:
+                    blocked = True
+                if not blocked:
+                    car.y -= car.vel
+                if car.y < -50:
+                    car.y = SCREEN_H + 50
+                    car.passed_line = False
+
+            elif direction == "S":
+                stop_line = cy - stop_dist
+                if car.y >= stop_line:
+                    car.passed_line = True
+                if not car.passed_line and light_state == "R" and car.y + car.vel >= stop_line:
+                    blocked = True
+                if front_car and (front_car.y - car.y) < min_gap:
+                    blocked = True
+                if not blocked:
+                    car.y += car.vel
+                if car.y > SCREEN_H + 50:
+                    car.y = -50
+                    car.passed_line = False
+
+            elif direction == "E":
+                stop_line = cx - stop_dist
+                if car.x >= stop_line:
+                    car.passed_line = True
+                if not car.passed_line and light_state == "R" and car.x + car.vel >= stop_line:
+                    blocked = True
+                if front_car and (front_car.x - car.x) < min_gap:
+                    blocked = True
+                if not blocked:
+                    car.x += car.vel
+                if car.x > SCREEN_W + 50:
+                    car.x = -50
+                    car.passed_line = False
+
+            elif direction == "W":
+                stop_line = cx + stop_dist
+                if car.x <= stop_line:
+                    car.passed_line = True
+                if not car.passed_line and light_state == "R" and car.x - car.vel <= stop_line:
+                    blocked = True
+                if front_car and (car.x - front_car.x) < min_gap:
+                    blocked = True
+                if not blocked:
+                    car.x -= car.vel
+                if car.x < -50:
+                    car.x = SCREEN_W + 50
+                    car.passed_line = False
+
+
+class PygameView:
+    def __init__(self, controller):
+        pygame.init()
+        self.ctrl = controller
+        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        pygame.display.set_caption("🚦 Simulador de Tráfego - Cruzamento")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.SysFont("Arial", 18)
+
+    def draw_roads(self):
+        self.screen.fill(BG_COLOR)
+        pygame.draw.rect(self.screen, ROAD_COLOR, (SCREEN_W//2 - ROAD_W//2, 0, ROAD_W, SCREEN_H))
+        pygame.draw.rect(self.screen, ROAD_COLOR, (0, SCREEN_H//2 - ROAD_W//2, SCREEN_W, ROAD_W))
+
+    def draw_stop_lines(self):
+        cx, cy = SCREEN_W//2, SCREEN_H//2
+        offset = 160
+        stop_color = (255, 255, 255)
+        thickness = 3
+        pygame.draw.line(self.screen, stop_color, (cx - ROAD_W//2, cy - offset), (cx + ROAD_W//2, cy - offset), thickness)
+        pygame.draw.line(self.screen, stop_color, (cx - ROAD_W//2, cy + offset), (cx + ROAD_W//2, cy + offset), thickness)
+        pygame.draw.line(self.screen, stop_color, (cx - offset, cy - ROAD_W//2), (cx - offset, cy + ROAD_W//2), thickness)
+        pygame.draw.line(self.screen, stop_color, (cx + offset, cy - ROAD_W//2), (cx + offset, cy + ROAD_W//2), thickness)
+
+    def draw_lights(self):
+        cx, cy = SCREEN_W//2, SCREEN_H//2
+        offset = 70
+        for i, light in enumerate(self.ctrl.lights):
+            color = {"R": RED, "Y": YELLOW, "G": GREEN}[light.curr_state.name]
+            if i == 0: pos = (cx - 40, cy - offset)
+            elif i == 1: pos = (cx + 40, cy + offset)
+            elif i == 2: pos = (cx + offset, cy - 40)
+            elif i == 3: pos = (cx - offset, cy + 40)
+            pygame.draw.circle(self.screen, color, pos, 15)
+
+    def draw_cars(self):
+        for car in self.ctrl.cars:
+            color = CAR_COLORS[self.ctrl.directions.index(car.direction)]
+            surf = pygame.Surface(CAR_SIZE)
+            surf.fill(color)
+            rotated = pygame.transform.rotate(surf, car.angle)
+            rect = rotated.get_rect(center=(car.x, car.y))
+            self.screen.blit(rotated, rect)
+
+    def draw_hud(self):
+        fps = self.clock.get_fps()
+        txt = self.font.render(f"FPS: {fps:.1f}", True, (255, 255, 255))
+        self.screen.blit(txt, (10, 10))
+
+    def render(self):
+        self.draw_roads()
+        self.draw_stop_lines()
+        self.draw_cars()
+        self.draw_lights()
+        self.draw_hud()
+        pygame.display.flip()
+        self.clock.tick(FPS)
+
+
+def main():
+    ctrl = TrafficController()
+    view = PygameView(ctrl)
+    running = True
+
+    while running:
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                running = False
+        ctrl.update()
+        view.render()
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    main()
